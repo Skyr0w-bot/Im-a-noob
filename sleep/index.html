@@ -1,0 +1,743 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: 'Montserrat'; src: url(vendor/montserrat.woff2) format('woff2'); font-weight: 100 900; }
+  @font-face { font-family: 'Inter'; src: url(vendor/inter.woff2) format('woff2'); font-weight: 100 900; }
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; background: #000; }
+  #gl, #ghost { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; }
+  #ghost { pointer-events: none; opacity: 0; }
+  .ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+  #vignette { background: radial-gradient(ellipse 75% 60% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.85) 100%); opacity: 0.35; }
+  #tint { mix-blend-mode: multiply; opacity: 0; }
+  #grain { opacity: 0.07; image-rendering: pixelated; }
+  #lidTop, #lidBot { position: absolute; left: -5%; width: 110%; height: 0; background: #000; }
+  #lidTop { top: 0; border-radius: 0 0 50% 50% / 0 0 18% 18%; }
+  #lidBot { bottom: 0; border-radius: 50% 50% 0 0 / 18% 18% 0 0; }
+  #flash { background: #fff; opacity: 0; }
+
+  #hud { position: absolute; left: 54px; top: 650px; color: #fff; font-family: 'Inter', sans-serif;
+         text-shadow: 0 2px 10px rgba(0,0,0,0.55), 0 0 2px rgba(0,0,0,0.6); }
+  #hudLabel { font-weight: 700; font-size: 25px; letter-spacing: 3px; opacity: 0.95; }
+  #hudBig { font-weight: 300; font-size: 104px; line-height: 1.02; letter-spacing: -1px; margin: 2px 0 4px -4px; white-space: nowrap; }
+  #hudSub { font-weight: 700; font-size: 21px; letter-spacing: 2.2px; opacity: 0.92; max-width: 760px; }
+
+  #cap { position: absolute; left: 70px; right: 70px; top: 1150px; text-align: center;
+         font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 64px; line-height: 1.13;
+         color: #fff; letter-spacing: -0.5px;
+         -webkit-text-stroke: 11px #000; paint-order: stroke fill;
+         text-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+  #cap .hl { color: #ffd23f; }
+
+  #rw { position: absolute; left: 40px; top: 120px; font-family: 'Inter', monospace; font-weight: 800; font-size: 54px;
+        color: #fff; letter-spacing: 4px; opacity: 0; text-shadow: 3px 0 0 #ff2bd6, -3px 0 0 #2bf0ff; }
+  #bars { opacity: 0; }
+  .bar { position: absolute; left: 0; width: 100%; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl" width="1080" height="1920"></canvas>
+  <canvas id="ghost" width="540" height="960"></canvas>
+  <div id="tint" class="ov"></div>
+  <div id="vignette" class="ov"></div>
+  <canvas id="grain" class="ov" width="270" height="480"></canvas>
+  <div id="bars" class="ov"></div>
+  <div id="hud"><div id="hudLabel"></div><div id="hudBig"></div><div id="hudSub"></div></div>
+  <div id="cap"></div>
+  <div id="rw">◀◀ REWIND</div>
+  <div id="flash" class="ov"></div>
+  <div id="lidTop"></div><div id="lidBot"></div>
+</div>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { SCENES, CAPTIONS, DURATION } from './timeline.js';
+
+// ---------- helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, u) => a + (b - a) * u;
+const ease = u => { u = clamp(u); return u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; };
+const easeOut = u => 1 - Math.pow(1 - clamp(u), 3);
+const smooth = (a, b, x) => { const u = clamp((x - a) / (b - a)); return u * u * (3 - 2 * u); };
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const vlerp = (a, b, u) => a.clone().lerp(b, u);
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const noise1 = (x, s = 0) => Math.sin(x * 1.31 + s) * 0.5 + Math.sin(x * 2.17 + s * 1.7) * 0.3 + Math.sin(x * 3.73 + s * 2.3) * 0.2;
+
+// ---------- renderer ----------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(1080, 1920, false);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1080 / 1920, 0.05, 400);
+scene.fog = new THREE.Fog(0xb9d3e8, 60, 220);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x88aa77, 1.2);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+scene.add(sun, sun.target);
+const lamp = new THREE.PointLight(0xffb36b, 0, 12, 1.6);
+lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.bias = -0.002;
+scene.add(lamp);
+const phoneLight = new THREE.PointLight(0x7fb2ff, 0, 3, 2);
+scene.add(phoneLight);
+const clockLight = new THREE.PointLight(0xff3030, 0, 2.2, 2);
+scene.add(clockLight);
+const faceLight = new THREE.PointLight(0xa8c0ff, 0, 3.2, 1.5);
+scene.add(faceLight);
+
+// ---------- materials / boxes ----------
+const matCache = new Map();
+function mat(color, opts = {}) {
+  const key = color + JSON.stringify(opts);
+  if (!opts.unique && matCache.has(key)) return matCache.get(key);
+  const m = opts.basic ? new THREE.MeshBasicMaterial({ color, transparent: !!opts.transparent, opacity: opts.opacity ?? 1, fog: opts.fog ?? true })
+                       : new THREE.MeshLambertMaterial({ color, emissive: opts.emissive ?? 0x000000, transparent: !!opts.transparent, opacity: opts.opacity ?? 1 });
+  if (!opts.unique) matCache.set(key, m);
+  return m;
+}
+const geoBox = new THREE.BoxGeometry(1, 1, 1);
+function box(parent, w, h, d, color, x, y, z, o = {}) {
+  const m = new THREE.Mesh(geoBox, o.material || mat(color, o));
+  m.scale.set(w, h, d); m.position.set(x, y, z);
+  m.castShadow = o.cast ?? true; m.receiveShadow = o.receive ?? true;
+  parent.add(m); return m;
+}
+
+// ---------- canvas textures ----------
+function canvasTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d'); draw(ctx, w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  t.userData = { c, ctx, draw }; return t;
+}
+function skylineTex(mode) {
+  return canvasTex(512, 384, (g, w, h) => {
+    const r = rng(7);
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    if (mode === 'night') { sky.addColorStop(0, '#060b1f'); sky.addColorStop(1, '#1b2850'); }
+    else if (mode === 'dusk') { sky.addColorStop(0, '#5a4a8a'); sky.addColorStop(1, '#f0a07a'); }
+    else { sky.addColorStop(0, '#9cc4e6'); sky.addColorStop(1, '#dfeaf2'); }
+    g.fillStyle = sky; g.fillRect(0, 0, w, h);
+    if (mode === 'night') { g.fillStyle = '#f2f0dc'; g.beginPath(); g.arc(400, 70, 22, 0, 7); g.fill(); }
+    for (let i = 0; i < 14; i++) {
+      const bw = 40 + r() * 60, bx = r() * w - 20, bh = 120 + r() * 230;
+      g.fillStyle = mode === 'night' ? '#0e1328' : mode === 'dusk' ? '#4a3b5e' : '#c9ced6';
+      g.fillRect(bx, h - bh, bw, bh);
+      for (let yy = h - bh + 10; yy < h - 8; yy += 16) for (let xx = bx + 6; xx < bx + bw - 8; xx += 12) {
+        const lit = r();
+        g.fillStyle = mode === 'night' ? (lit < 0.35 ? '#ffd27a' : '#1a2140') : mode === 'dusk' ? (lit < 0.3 ? '#ffcf86' : '#5b4c70') : '#8fa7bd';
+        g.fillRect(xx, yy, 6, 9);
+      }
+    }
+  });
+}
+const clockTex = canvasTex(256, 112, () => {});
+function drawClock(str) {
+  const { ctx: g } = clockTex.userData;
+  if (clockTex.userData.last === str) return;
+  clockTex.userData.last = str;
+  g.fillStyle = '#0a0606'; g.fillRect(0, 0, 256, 112);
+  g.font = '700 74px Inter'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#2a0b0b'; g.fillText('88:88', 128, 60);
+  g.fillStyle = '#ff2a2a'; g.shadowColor = '#ff0000'; g.shadowBlur = 14; g.fillText(str, 128, 60); g.shadowBlur = 0;
+  clockTex.needsUpdate = true;
+}
+const calTex = canvasTex(256, 320, () => {});
+function drawCalendar(n) {
+  const { ctx: g } = calTex.userData;
+  if (calTex.userData.last === n) return; calTex.userData.last = n;
+  g.fillStyle = '#f4ecd8'; g.fillRect(0, 0, 256, 320);
+  g.fillStyle = '#b3261e'; g.fillRect(0, 0, 256, 56);
+  g.fillStyle = '#fff'; g.font = '800 30px Inter'; g.textAlign = 'center'; g.fillText('DAYS AWAKE', 128, 39);
+  g.font = '700 30px Inter'; g.textBaseline = 'middle';
+  for (let i = 0; i < 12; i++) {
+    const cx = 44 + (i % 3) * 84, cy = 96 + Math.floor(i / 3) * 60;
+    g.strokeStyle = '#6b5e48'; g.lineWidth = 2; g.strokeRect(cx - 34, cy - 26, 68, 52);
+    if (i < 11) { g.fillStyle = '#3b3326'; g.fillText(String(i + 1), cx, cy + 2); }
+    if (i < n) { g.strokeStyle = '#c0261b'; g.lineWidth = 6; g.beginPath(); g.moveTo(cx - 24, cy - 18); g.lineTo(cx + 24, cy + 18); g.moveTo(cx + 24, cy - 18); g.lineTo(cx - 24, cy + 18); g.stroke(); }
+  }
+  calTex.needsUpdate = true;
+}
+
+// ---------- person ----------
+const SKIN = 0xd9a27a;
+function makePerson(o = {}) {
+  const skin = o.skin ?? SKIN;
+  const g = new THREE.Group();
+  const P = { g };
+  const legMat = mat(o.pants ?? 0x2b3557), shirtMat = mat(o.shirt ?? 0x2f8f83);
+  const mkLimb = (x, y, w, h, d, m) => { const pv = new THREE.Group(); pv.position.set(x, y, 0); g.add(pv); box(pv, w, h, d, 0, 0, -h / 2, 0, { material: m }); return pv; };
+  P.legL = mkLimb(-0.15, 0.8, 0.27, 0.8, 0.3, legMat);
+  P.legR = mkLimb(0.15, 0.8, 0.27, 0.8, 0.3, legMat);
+  box(P.legL, 0.29, 0.12, 0.36, 0x222222, 0, -0.75, 0.03); box(P.legR, 0.29, 0.12, 0.36, 0x222222, 0, -0.75, 0.03);
+  P.torso = new THREE.Group(); P.torso.position.set(0, 0.8, 0); g.add(P.torso);
+  box(P.torso, 0.62, 0.74, 0.34, 0, 0, 0.37, 0, { material: shirtMat });
+  const mkArm = (x) => { const pv = new THREE.Group(); pv.position.set(x, 0.7, 0); P.torso.add(pv); box(pv, 0.2, 0.62, 0.22, 0, 0, -0.29, 0, { material: shirtMat }); box(pv, 0.18, 0.12, 0.2, skin, 0, -0.65, 0); return pv; };
+  P.armL = mkArm(-0.42); P.armR = mkArm(0.42);
+  P.head = new THREE.Group(); P.head.position.set(0, 0.74, 0); P.torso.add(P.head);
+  box(P.head, 0.54, 0.54, 0.52, skin, 0, 0.29, 0);
+  box(P.head, 0.58, 0.15, 0.56, o.hair ?? 0x3a2618, 0, 0.6, -0.01);
+  box(P.head, 0.58, 0.36, 0.14, o.hair ?? 0x3a2618, 0, 0.42, -0.23);
+  P.whiteMat = mat(0xffffff, { unique: true });
+  P.bagMat = mat(skin, { unique: true });
+  P.lids = [];
+  for (const sx of [-0.12, 0.12]) {
+    box(P.head, 0.13, 0.1, 0.02, 0, sx, 0.33, 0.265, { material: P.whiteMat, cast: false });
+    const pu = box(P.head, 0.06, 0.08, 0.02, 0x1d1d1d, sx + (sx < 0 ? 0.02 : -0.02), 0.325, 0.275, { cast: false });
+    (P.pupils ??= []).push(pu);
+    box(P.head, 0.14, 0.045, 0.02, 0, sx, 0.26, 0.262, { material: P.bagMat, cast: false });
+    const lid = box(P.head, 0.15, 0.115, 0.03, skin, sx, 0.33, 0.272, { cast: false });
+    P.lids.push(lid);
+  }
+  box(P.head, 0.16, 0.035, 0.02, 0x7a3b30, 0, 0.15, 0.262, { cast: false });
+  P.basePupil = P.pupils.map(p => p.position.clone());
+  // eyes: open 0..1 ; tired 0..1
+  P.setEyes = (open, tired = 0, look = [0, 0]) => {
+    const a = clamp(1 - open);
+    P.lids.forEach(l => { l.visible = a > 0.02; l.scale.y = 0.115 * a; l.position.y = 0.385 - 0.115 * a / 2; });
+    P.whiteMat.color.set(0xffffff).lerp(new THREE.Color(0xf0a8a0), tired * 0.75);
+    P.bagMat.color.set(skin).lerp(new THREE.Color(0x5a3a5a), tired * 0.9);
+    P.pupils.forEach((p, i) => { p.position.x = P.basePupil[i].x + look[0] * 0.03; p.position.y = P.basePupil[i].y + look[1] * 0.02; });
+  };
+  P.reset = () => {
+    for (const k of ['legL', 'legR', 'armL', 'armR', 'torso', 'head']) P[k].rotation.set(0, 0, 0);
+    P.g.rotation.set(0, 0, 0); P.torso.position.y = 0.8; P.setEyes(1, 0);
+  };
+  P.walk = (ph, amp = 0.55) => { const s = Math.sin(ph) * amp; P.legL.rotation.x = s; P.legR.rotation.x = -s; P.armL.rotation.x = -s * 0.8; P.armR.rotation.x = s * 0.8; };
+  P.sit = () => { P.legL.rotation.x = -Math.PI / 2; P.legR.rotation.x = -Math.PI / 2; };
+  return P;
+}
+
+// ---------- CITY ----------
+const city = new THREE.Group(); scene.add(city);
+const cityRand = rng(42);
+box(city, 600, 0.2, 600, 0x7cae5a, 0, -0.1, 0, { cast: false });
+box(city, 600, 0.06, 8, 0x5b5e66, 0, 0.03, 0, { cast: false });           // road
+box(city, 600, 0.2, 3.2, 0xc9c3b6, 0, 0.1, 5.6, { cast: false });         // sidewalks
+box(city, 600, 0.2, 3.2, 0xc9c3b6, 0, 0.1, -5.6, { cast: false });
+for (let x = -300; x < 300; x += 6) box(city, 3, 0.07, 0.25, 0xeeeeee, x, 0.07, 0, { cast: false });
+for (let i = 0; i < 7; i++) box(city, 0.7, 0.075, 7, 0xf4f4f4, -3 + i * 1.0, 0.075, 0, { cast: false });
+// windows instanced
+const winList = [];
+function addBuilding(x, z, w, d, h, col = 0xdcdcdc) {
+  box(city, w, h, d, col, x, h / 2, z);
+  box(city, w + 0.3, 0.4, d + 0.3, 0xbdbdbd, x, h + 0.2, z);
+  const faces = [[0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0]];
+  for (const [fx, , fz] of faces) {
+    const len = fx ? d : w;
+    const nx = Math.floor((len - 1) / 1.8), ny = Math.floor((h - 2) / 2.6);
+    for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+      const u = -len / 2 + 1.0 + i * ((len - 2) / Math.max(1, nx - 1)) ;
+      const y = 2.2 + j * 2.6;
+      const px = fx ? x + fx * (w / 2 + 0.03) : x + u, pz = fz ? z + fz * (d / 2 + 0.03) : z + u;
+      winList.push({ px, py: y, pz, fz, rot: fx ? Math.PI / 2 : 0, r: cityRand(), b: cityRand() });
+    }
+  }
+}
+// front rows
+for (let x = -110; x < 110;) { const w = 7 + cityRand() * 7; addBuilding(x + w / 2, -14 - cityRand() * 3, w, 8, 14 + cityRand() * 26); x += w + 1.5 + cityRand() * 2; }
+for (let x = -110; x < 110;) { const w = 7 + cityRand() * 7; addBuilding(x + w / 2, 15 + cityRand() * 3, w, 8, 12 + cityRand() * 22); x += w + 1.5 + cityRand() * 2; }
+for (let i = 0; i < 45; i++) addBuilding(-150 + cityRand() * 300, -40 - cityRand() * 70, 10 + cityRand() * 12, 10 + cityRand() * 10, 30 + cityRand() * 60, 0xd2d4d8);
+const winGeo = new THREE.BoxGeometry(1.05, 1.5, 0.08);
+const winMesh = new THREE.InstancedMesh(winGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), winList.length);
+{ const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = V(1, 1, 1);
+  winList.forEach((w, i) => { q.setFromAxisAngle(V(0, 1, 0), w.rot); m.compose(V(w.px, w.py, w.pz), q, s); winMesh.setMatrixAt(i, m); winMesh.setColorAt(i, new THREE.Color(0x8fa6bb)); }); }
+city.add(winMesh);
+// "our" window: nearest front-row north window near x=4 at a mid floor
+let ourWin = 0; { let best = 1e9; winList.forEach((w, i) => { if (w.fz !== 1 || w.pz > -8 || w.pz < -14) return; const d = Math.abs(w.px - 4) + Math.abs(w.py - 12.6) * 2; if (d < best) { best = d; ourWin = i; } }); }
+const cWinDay = new THREE.Color(0x93abc2), cWinDusk = new THREE.Color(0x6e6382), cLit = new THREE.Color(0xffd48a), cDark = new THREE.Color(0x1c2238), cPhone = new THREE.Color(0x9cc4ff);
+function setWindows(mode, litFrac = 0.5) {
+  for (let i = 0; i < winList.length; i++) {
+    const w = winList[i]; let c;
+    if (mode === 'day') c = cWinDay.clone().offsetHSL(0, 0, (w.b - 0.5) * 0.06);
+    else if (mode === 'dusk') c = w.r < 0.25 ? cLit : cWinDusk;
+    else { c = (w.r < litFrac || i === ourWin) ? (w.b < 0.15 ? cPhone : cLit) : cDark; if (i === ourWin) c = cPhone; }
+    winMesh.setColorAt(i, c);
+  }
+  winMesh.instanceColor.needsUpdate = true;
+}
+// trees, lamps, traffic lights
+const streetLampHeads = [];
+for (let x = -100; x < 100; x += 11) {
+  for (const z of [7.6, -7.6]) {
+    const tx = x + (z > 0 ? 0 : 5.5);
+    box(city, 0.35, 2.2, 0.35, 0x6b4a2e, tx, 1.1 + 0.2, z);
+    box(city, 2.2, 1.8, 2.2, 0x3f8a3a, tx, 3.0, z);
+    box(city, 1.5, 1.0, 1.5, 0x4c9a45, tx, 4.2, z);
+  }
+  box(city, 0.15, 5, 0.15, 0x3c3f45, x + 3, 2.5, 4.4);
+  box(city, 1.2, 0.15, 0.2, 0x3c3f45, x + 3, 5, 4.0);
+  streetLampHeads.push(box(city, 0.6, 0.15, 0.4, 0xfff1c4, x + 3, 4.88, 3.6, { cast: false, unique: true }));
+}
+const lampHeadMat = mat(0xfff1c4, { emissive: 0x000000, unique: true });
+streetLampHeads.forEach(m => m.material = lampHeadMat);
+for (const [x, z, r] of [[-3.8, 4.3, 0], [3.8, -4.3, Math.PI]]) {
+  box(city, 0.18, 3.2, 0.18, 0x2d2f33, x, 1.6, z);
+  box(city, 0.45, 1.1, 0.4, 0x222428, x, 3.5, z);
+  box(city, 0.25, 0.22, 0.05, 0xff3b30, x, 3.8, z + (r ? -0.22 : 0.22), { emissive: 0x551111 });
+}
+// cars
+const CAR_COLS = [0xd9483b, 0x3f6fd8, 0xf2c14e, 0xeeeeee, 0x2e2e33, 0x58a66b, 0x9a5bd1];
+function makeCar(col) {
+  const g = new THREE.Group();
+  box(g, 4.0, 0.9, 1.9, col, 0, 0.75, 0);
+  box(g, 2.2, 0.75, 1.7, col, -0.2, 1.55, 0);
+  box(g, 2.25, 0.55, 1.72, 0x2b3a4a, -0.2, 1.55, 0, { cast: false });
+  for (const [x, z] of [[1.3, 0.95], [-1.3, 0.95], [1.3, -0.95], [-1.3, -0.95]]) box(g, 0.75, 0.75, 0.3, 0x1b1b1b, x, 0.38, z);
+  g.userData.lights = [box(g, 0.08, 0.25, 0.4, 0xfff6d5, 2.02, 0.85, 0.6, { cast: false, unique: true }), box(g, 0.08, 0.25, 0.4, 0xfff6d5, 2.02, 0.85, -0.6, { cast: false, unique: true })];
+  city.add(g); return g;
+}
+const cars = [];
+for (let i = 0; i < 12; i++) { const c = makeCar(CAR_COLS[i % CAR_COLS.length]); const lane = i % 2 ? 1 : -1; cars.push({ g: c, lane, x0: cityRand() * 240 - 120, v: (9 + cityRand() * 5) }); }
+const hero_car = makeCar(0x3f6fd8);
+function placeCars(t, speedMul = 1, skip = null) {
+  for (const c of cars) {
+    let x = c.x0 + c.lane * c.v * t * speedMul; x = ((x + 120) % 240 + 240) % 240 - 120;
+    if (skip && skip(x, c)) { c.g.visible = false; continue; }
+    c.g.visible = true;
+    c.g.position.set(x, 0, c.lane * 2); c.g.rotation.y = c.lane > 0 ? 0 : Math.PI;
+  }
+}
+// pedestrians
+const PEOPLE_COLS = [[0xb5443a, 0x2b2b2b], [0x3466b5, 0x4a3b2a], [0xe0b03c, 0x333a55], [0x6aa84f, 0x2a2a3a], [0x8e5ab5, 0x3a3a3a], [0xdddddd, 0x29435e], [0xe07b39, 0x2b2b2b]];
+const SKINS = [0xd9a27a, 0x8d5a3b, 0xf1c9a5, 0xb57d55, 0x6b4128];
+const peds = [];
+for (let i = 0; i < 26; i++) {
+  const [s, p] = PEOPLE_COLS[i % PEOPLE_COLS.length];
+  const P = makePerson({ shirt: s, pants: p, skin: SKINS[i % SKINS.length], hair: i % 3 ? 0x2a1a10 : 0x111111 });
+  city.add(P.g);
+  const side = i % 2 ? 1 : -1, dir = cityRand() < 0.5 ? 1 : -1;
+  peds.push({ P, z: side * (4.9 + cityRand() * 1.4), dir, x0: cityRand() * 160 - 80, v: 1.2 + cityRand() * 0.5, ph: cityRand() * 6 });
+}
+function placePeds(t, speedMul = 1, avoid = null) {
+  for (const p of peds) {
+    let x = p.x0 + p.dir * p.v * t * speedMul; x = ((x + 80) % 160 + 160) % 160 - 80;
+    p.P.g.visible = !(avoid && avoid(x, p));
+    p.P.g.position.set(x, 0.2, p.z); p.P.g.rotation.y = p.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+    p.P.walk(t * speedMul * p.v * 4.2 * Math.sign(speedMul) + p.ph);
+  }
+}
+// hero in city
+const heroC = makePerson(); city.add(heroC.g);
+
+// ---------- ROOM (separate set) ----------
+const room = new THREE.Group(); room.position.set(0, 0, 0); scene.add(room);
+const RW = 4.5, RD = 4, RH = 3.4;
+box(room, 9, 0.2, 8, 0xb88a5c, 0, -0.1, 0, { cast: false });                      // floor
+for (let i = -4; i <= 4; i++) box(room, 0.03, 0.005, 8, 0x9c7449, i, 0.003, 0, { cast: false, receive: true });
+box(room, 0.2, RH, 8, 0xd9d2c3, -RW - 0.1, RH / 2, 0);                              // left wall
+// back wall with window hole x∈[0.6,3.0], y∈[1.2,2.7]
+const wallC = 0xe6dfd0;
+box(room, 5.1, RH, 0.2, wallC, -1.95, RH / 2, -RD - 0.1);
+box(room, 1.5, RH, 0.2, wallC, 3.75, RH / 2, -RD - 0.1);
+box(room, 2.4, 1.2, 0.2, wallC, 1.8, 0.6, -RD - 0.1);
+box(room, 2.4, 0.7, 0.2, wallC, 1.8, 3.05, -RD - 0.1);
+box(room, 2.6, 0.08, 0.35, 0xf2f2f2, 1.8, 1.2, -RD + 0.05);                        // sill
+box(room, 0.06, 1.5, 0.06, 0xf2f2f2, 1.8, 1.95, -RD - 0.05, { cast: false });
+const skyNight = skylineTex('night'), skyDay = skylineTex('day'), skyDusk = skylineTex('dusk');
+const skyPlaneMat = new THREE.MeshBasicMaterial({ map: skyNight, fog: false });
+const skyPlane = new THREE.Mesh(new THREE.PlaneGeometry(6, 4.5), skyPlaneMat); skyPlane.position.set(1.8, 1.9, -RD - 1.2); room.add(skyPlane);
+box(room, 9, 0.12, 0.08, 0xcfc6b4, 0, 0.06, -RD + 0.02, { cast: false });
+// window silhouette figure (outside)
+const winFig = new THREE.Group(); room.add(winFig);
+box(winFig, 0.5, 1.5, 0.2, 0x050505, 0, 0.75, 0, { basic: true, fog: false });
+box(winFig, 0.36, 0.36, 0.2, 0x050505, 0, 1.68, 0, { basic: true, fog: false });
+winFig.position.set(2.3, 0.75, -RD - 0.6);
+// bed
+box(room, 1.7, 0.45, 2.5, 0x6d4a33, -3.0, 0.225, -2.7);
+box(room, 1.6, 0.25, 2.4, 0xf3f1ea, -3.0, 0.57, -2.7);
+box(room, 1.75, 1.1, 0.15, 0x5b3c28, -3.0, 0.55, -3.95);
+box(room, 1.1, 0.18, 0.55, 0xffffff, -3.0, 0.78, -3.55);
+const blanket = box(room, 1.66, 0.22, 1.75, 0x3d5a99, -3.0, 0.82, -2.15);
+box(room, 1.7, 0.05, 0.25, 0xe8e4da, -3.0, 0.94, -2.95, { cast: false });
+// nightstand + clock + lamp
+box(room, 0.7, 0.6, 0.6, 0x7a5338, -1.75, 0.3, -3.55);
+const clockBody = box(room, 0.42, 0.2, 0.18, 0x1b1b1b, -1.75, 0.7, -3.5);
+const clockFace = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.165), new THREE.MeshBasicMaterial({ map: clockTex, fog: false })); clockFace.position.set(-1.75, 0.7, -3.405); room.add(clockFace);
+box(room, 0.12, 0.35, 0.12, 0x333333, -1.6, 0.78, -3.72);
+const lampShade = box(room, 0.38, 0.28, 0.38, 0xf5e6c8, -1.6, 1.05, -3.72, { unique: true, emissive: 0x000000 });
+// desk area (in front, facing +z)
+const desk = new THREE.Group(); room.add(desk);
+box(desk, 2.4, 0.1, 0.9, 0xc8a27a, 2.0, 0.95, 1.0);
+for (const [x, z] of [[0.9, 0.62], [3.1, 0.62], [0.9, 1.38], [3.1, 1.38]]) box(desk, 0.08, 0.95, 0.08, 0x8c6a48, x, 0.475, z);
+const monGroup = new THREE.Group(); monGroup.position.set(2.95, 0, 1.15); monGroup.rotation.y = 0.75; desk.add(monGroup);
+const monitor = box(monGroup, 0.9, 0.55, 0.06, 0x111111, 0, 1.38, 0);
+const monScreen = box(monGroup, 0.82, 0.47, 0.02, 0x9fc6ff, 0, 1.38, -0.035, { cast: false, emissive: 0x2a3d66, unique: true });
+box(monGroup, 0.08, 0.15, 0.08, 0x222222, 0, 1.05, 0);
+const radio = box(desk, 0.7, 0.4, 0.3, 0x8a5a2b, 2.6, 1.2, 1.2); radio.visible = false;
+const cups = [];
+for (let i = 0; i < 5; i++) { const c = new THREE.Group(); box(c, 0.16, 0.2, 0.16, 0xffffff, 0, 0.1, 0); box(c, 0.13, 0.02, 0.13, 0x4a2c17, 0, 0.2, 0, { cast: false }); box(c, 0.05, 0.1, 0.03, 0xffffff, 0.1, 0.11, 0); c.position.set(1.15 + i * 0.27, 1.0, 0.8 + (i % 2) * 0.12); desk.add(c); cups.push(c); }
+// chair
+box(room, 0.6, 0.08, 0.6, 0x333a44, 2.0, 0.5, 0.1); box(room, 0.6, 0.7, 0.08, 0x333a44, 2.0, 0.85, -0.2);
+box(room, 0.08, 0.5, 0.08, 0x222222, 2.0, 0.25, 0.1);
+// rug, shelf, poster, calendar
+box(room, 2.6, 0.02, 1.8, 0x9b4f4f, -0.3, 0.01, -0.6, { cast: false });
+box(room, 0.35, 0.06, 1.6, 0x7a5338, -RW + 0.18, 2.2, -0.2);
+for (let i = 0; i < 9; i++) box(room, 0.25, 0.3 + (i % 3) * 0.05, 0.12, [0xc0392b, 0x2980b9, 0xf1c40f, 0x27ae60, 0x8e44ad][i % 5], -RW + 0.18, 2.4 + (i % 3) * 0.025, -0.9 + i * 0.16);
+box(room, 0.03, 1.0, 0.75, 0x2c3e50, -RW + 0.02, 1.7, 1.6);
+box(room, 0.035, 0.8, 0.6, 0xe67e22, -RW + 0.03, 1.7, 1.6, { cast: false });
+const calendar = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.78), new THREE.MeshLambertMaterial({ map: calTex })); calendar.position.set(-0.45, 1.95, -RD + 0.02); room.add(calendar);
+// shadow figures
+function makeShade() { const g = new THREE.Group(); const m = mat(0x050507, { basic: true, transparent: true, opacity: 1, unique: true });
+  box(g, 0.55, 1.5, 0.25, 0, 0, 0.75, 0, { material: m, cast: false }); box(g, 0.4, 0.42, 0.3, 0, 0, 1.75, 0, { material: m, cast: false });
+  box(g, 0.14, 1.25, 0.18, 0, -0.36, 1.0, 0, { material: m, cast: false }); box(g, 0.14, 1.25, 0.18, 0, 0.36, 1.0, 0, { material: m, cast: false });
+  g.scale.set(1.05, 1.2, 1.05); g.userData.m = m; room.add(g); return g; }
+const shadeA = makeShade(); shadeA.position.set(-4.0, 0, -3.55); shadeA.rotation.y = 0.6;
+const shadeB = makeShade(); shadeB.position.set(-1.0, 0, -1.2); shadeB.rotation.y = 1.4;
+// basketball (1964)
+const ball = box(room, 0.3, 0.3, 0.3, 0xd35400, 0, 0, 0);
+// brain-wash particles
+const PN = 220;
+const partMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.045, 0.045, 0.045), new THREE.MeshBasicMaterial({ color: 0x7fe8ff, transparent: true, opacity: 0.9, fog: false }), PN);
+partMesh.frustumCulled = false; room.add(partMesh);
+const partSeed = Array.from({ length: PN }, (_, i) => { const r = rng(900 + i); return [r(), r(), r(), r()]; });
+// phone
+const phone = new THREE.Group(); box(phone, 0.16, 0.3, 0.025, 0x111111, 0, 0, 0); box(phone, 0.14, 0.27, 0.01, 0x9cc4ff, 0, 0, 0.015, { cast: false, basic: true, fog: false }); room.add(phone);
+// hero in room
+const hero = makePerson(); room.add(hero.g);
+const randy = makePerson({ shirt: 0xf2f2f2, pants: 0x6b4f35, hair: 0x5a3b1e, skin: 0xf0c8a0 }); room.add(randy.g);
+
+// ---------- moods ----------
+const MOODS = {
+  day:      { sky: 0xb7d4ea, fog: [70, 230], hemi: [0xffffff, 0x8aa97a, 1.25], sun: [0xffffff, 2.3, V(35, 60, 25)], win: 'day' },
+  morning:  { sky: 0xcfe0ec, fog: [60, 220], hemi: [0xfff1dc, 0x8aa97a, 1.15], sun: [0xffe2b8, 2.4, V(60, 28, 30)], win: 'day' },
+  overcast: { sky: 0xb5bcc4, fog: [40, 170], hemi: [0xe8ecf0, 0x808a80, 1.45], sun: [0xdde3ea, 0.9, V(20, 60, 30)], win: 'day' },
+  dusk:     { sky: 0xd99a8c, fog: [35, 160], hemi: [0xffc7b0, 0x553f5a, 1.0], sun: [0xff9a62, 2.0, V(-70, 14, -20)], win: 'dusk' },
+  night:    { sky: 0x0b1228, fog: [40, 190], hemi: [0x3a4a80, 0x101018, 0.45], sun: [0x8ea8ff, 0.45, V(-30, 50, 20)], win: 'night' },
+  roomNight:{ sky: 0x05070d, fog: [30, 60],  hemi: [0x5a6ea8, 0x1a1626, 0.75], sun: [0x9db4ff, 1.6, V(3, 8, -12)] },
+  roomDay:  { sky: 0x1a1612, fog: [30, 60],  hemi: [0xfff5e6, 0x8a7560, 1.35], sun: [0xfff0d8, 1.9, V(6, 12, -14)] },
+};
+function setMood(name, litFrac) {
+  const m = MOODS[name];
+  scene.background = new THREE.Color(m.sky);
+  scene.fog.color.set(m.sky); scene.fog.near = m.fog[0]; scene.fog.far = m.fog[1];
+  hemi.color.set(m.hemi[0]); hemi.groundColor.set(m.hemi[1]); hemi.intensity = m.hemi[2];
+  sun.color.set(m.sun[0]); sun.intensity = m.sun[1];
+  if (m.win) setWindows(m.win, litFrac);
+  const night = name === 'night';
+  lampHeadMat.emissive.set(night ? 0xffe9a8 : 0x000000);
+  for (const c of [...cars.map(c => c.g), hero_car]) c.userData.lights.forEach(l => l.material.color.set(night ? 0xffffff : 0xd8d2c0));
+  return m;
+}
+function sunFollow(target, offset, span = 30) {
+  sun.position.copy(target).add(offset);
+  sun.target.position.copy(target);
+  const c = sun.shadow.camera; c.left = -span; c.right = span; c.top = span; c.bottom = -span; c.near = 1; c.far = 200; c.updateProjectionMatrix();
+}
+
+// ---------- overlays ----------
+const $ = id => document.getElementById(id);
+const hudEl = $('hud'), capEl = $('cap'), ghost = $('ghost'), gctx = ghost.getContext('2d');
+const grain = $('grain'), grCtx = grain.getContext('2d'), grImg = grCtx.createImageData(270, 480);
+function fmtCap(s) { return s.replace(/\*\*(.+?)\*\*/g, '<span class="hl">$1</span>'); }
+let lastCap = null, lastHud = null;
+function setCaption(t) {
+  const c = CAPTIONS.find(c => t >= c.t0 && t < c.t1);
+  if (!c) { capEl.style.opacity = 0; return; }
+  if (lastCap !== c) { capEl.innerHTML = fmtCap(c.text); lastCap = c; }
+  const a = c.t0 === 0 ? 1 : smooth(c.t0, c.t0 + 0.14, t), b = 1 - smooth(c.t1 - 0.14, c.t1, t);
+  const pop = c.t0 === 0 ? 1 : 0.9 + 0.1 * easeOut((t - c.t0) / 0.22) + 0.03 * Math.sin(clamp((t - c.t0) / 0.22) * Math.PI);
+  capEl.style.opacity = Math.min(a, b);
+  capEl.style.transform = `scale(${pop})`;
+}
+function setHud(t, h, t0) {
+  if (!h) { hudEl.style.opacity = 0; return; }
+  const key = h.label + '|' + h.sub;
+  if (lastHud !== key) { $('hudLabel').textContent = h.label; $('hudSub').textContent = h.sub; lastHud = key; }
+  $('hudBig').textContent = h.big;
+  const u = easeOut((t - t0) / 0.35);
+  hudEl.style.opacity = u; hudEl.style.transform = `translateY(${(1 - u) * 18}px)`;
+  if (h.top != null) hudEl.style.top = h.top + 'px'; else hudEl.style.top = '640px';
+}
+function setLids(c) { // c: 0 open, 1 closed
+  const h = 52 * clamp(c) + (c > 0 ? 2 : 0);
+  $('lidTop').style.height = h + '%'; $('lidBot').style.height = h + '%';
+}
+function drawGrain(seed, amt) {
+  grain.style.opacity = amt;
+  const r = rng(seed), d = grImg.data;
+  for (let i = 0; i < d.length; i += 4) { const v = r() * 255; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
+  grCtx.putImageData(grImg, 0, 0);
+}
+function setBars(t, on) {
+  const bars = $('bars'); bars.style.opacity = on;
+  if (!on) { canvas.style.transform = ''; return; }
+  const r = rng(Math.floor(t * 30) + 77); let html = '';
+  for (let i = 0; i < 6; i++) { const y = r() * 100, h = 0.6 + r() * 3.5, c = ['rgba(43,240,255,.55)', 'rgba(255,43,214,.5)', 'rgba(255,255,255,.35)'][i % 3]; html += `<div class="bar" style="top:${y}%;height:${h}%;background:${c};transform:translateX(${(r() - 0.5) * 60}px)"></div>`; }
+  html += `<div class="bar" style="top:${(t * 260) % 100}%;height:7%;background:rgba(255,255,255,.12)"></div>`;
+  bars.innerHTML = html;
+  canvas.style.transform = `translateX(${(r() - 0.5) * 18}px)`;
+}
+
+// ---------- scene logic ----------
+function setCam(p, l, fov = 50, roll = 0) {
+  camera.position.copy(p); camera.up.set(Math.sin(roll), Math.cos(roll), 0); camera.lookAt(l);
+  if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+}
+function shake(t, amp, s = 0) { return V(noise1(t * 3, s) * amp, noise1(t * 3.3, s + 5) * amp, noise1(t * 2.9, s + 9) * amp * 0.5); }
+const hh = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+function clockAt(totalMin) { totalMin = Math.floor(totalMin); const h = Math.floor(totalMin / 60) % 24, m = totalMin % 60; return [hh(h, m), `${hh(((h + 11) % 12) + 1, m)} ${h < 12 ? 'AM' : 'PM'}`]; }
+
+// lying pose in bed (face up), head toward back wall
+function poseLying(P, roll = 0, headTurn = 0) {
+  P.reset();
+  P.g.rotation.x = -Math.PI / 2; P.g.rotation.order = 'XYZ'; P.g.rotation.y = roll;
+  P.g.position.set(-3.0, 0.88, -1.55);
+  P.head.rotation.y = headTurn;
+  P.armL.rotation.z = 0.05; P.armR.rotation.z = -0.05;
+}
+function poseSitBed(P) { P.reset(); P.sit(); P.g.position.set(-2.45, 0.05, -2.5); P.g.rotation.y = Math.PI / 2; P.armL.rotation.x = -0.7; P.armR.rotation.x = -0.7; }
+
+function resetRoomProps() {
+  [shadeA, shadeB, winFig, partMesh, phone, ball, radio, randy.g].forEach(o => o.visible = false);
+  hero.g.visible = true; monitor.visible = monScreen.visible = true; cups.forEach(c => c.visible = false);
+  blanket.visible = true; blanket.scale.y = 0.22; blanket.position.y = 0.82;
+  lamp.intensity = 0; phoneLight.intensity = 0; clockLight.intensity = 0; faceLight.intensity = 0; faceLight.position.set(-2.4, 2.1, -2.7);
+  lampShade.material.emissive.set(0x000000); monScreen.material.emissive.set(0x2a3d66);
+  calendar.visible = true;
+}
+
+function frame(t) {
+  const S = SCENES.find(s => t >= s.t0 && t < s.t1) || SCENES[SCENES.length - 1];
+  const u = (t - S.t0) / (S.t1 - S.t0), lt = t - S.t0;
+  let hud = null, lids = 0, ghostAmt = 0, tintCol = null, tintAmt = 0, filter = '', vig = 0.35, grainAmt = 0.06, rew = 0, roll = 0;
+  const inRoom = !['h24', 'h48', 'day6', 'rewind', 'today'].includes(S.id);
+  city.visible = !inRoom; room.visible = inRoom;
+  if (inRoom) { resetRoomProps(); sunFollow(V(0, 0, -1), V(3, 8, -12), 9); }
+
+  switch (S.id) {
+    case 'hook': {
+      setMood('roomNight');
+      poseLying(hero, 0, 0); hero.setEyes(1, 0.15, [Math.sin(lt * 1.3) * 0.3, 0.6]);
+      const mins = 119 + (lt > 2.6 ? 1 : 0); drawClock(clockAt(mins)[0]);
+      clockLight.intensity = 2.4; clockLight.position.set(-1.9, 0.9, -3.3);
+      faceLight.intensity = 2.2;
+      const k = ease(u);
+      setCam(vlerp(V(-3.0, 1.95, -2.35), V(-1.0, 2.75, 0.1), k).add(shake(t, 0.01)), vlerp(V(-3.0, 1.1, -3.45), V(-2.6, 0.85, -2.9), k), lerp(40, 48, k));
+      // hours awake stopwatch, accelerating
+      const sec = Math.floor(Math.pow(lt, 3) * 140);
+      hud = { label: 'HOURS AWAKE', big: `${Math.floor(sec / 3600)}:${String(Math.floor(sec / 60) % 60).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`, sub: 'SLEEP LEFT: NONE' };
+      vig = 0.6; break;
+    }
+    case 'night1': {
+      setMood('roomNight');
+      const toss = Math.sin(lt * 1.1) > 0.35 ? 0.35 : Math.sin(lt * 1.1) < -0.6 ? -0.3 : 0;
+      poseLying(hero, toss * 0.25, toss * 1.1); hero.setEyes(lt % 2.7 < 0.15 ? 0.3 : 1, 0.25, [toss * 2, 0.4]);
+      blanket.position.x = -3.0 + toss * 0.05; blanket.rotation.z = toss * 0.08;
+      const mins = 192 + lt * 15.5; const [ck, ck12] = clockAt(mins); drawClock(ck);
+      clockLight.intensity = 1.4; clockLight.position.set(-1.75, 0.75, -3.25);
+      skyPlaneMat.map = skyNight;
+      const k = ease(u);
+      setCam(vlerp(V(0.8, 3.05, 1.2), V(-0.9, 2.6, -0.4), k), vlerp(V(-3.0, 0.8, -2.6), V(-3.0, 0.9, -3.1), k), 44);
+      hud = { label: 'NIGHT 1', big: ck12, sub: 'EYES CLOSED. BRAIN STILL ON.' };
+      vig = 0.55; break;
+    }
+    case 'h24': {
+      setMood('morning'); setWindows('day');
+      const x = 6 - lt * 1.45;
+      heroC.reset(); heroC.g.visible = true; heroC.g.position.set(x, 0.2, 5.3); heroC.g.rotation.y = -Math.PI / 2 + Math.sin(lt * 1.7) * 0.18;
+      heroC.walk(lt * 5.2, 0.45); heroC.g.rotation.z = Math.sin(lt * 1.7) * 0.07; heroC.head.rotation.z = Math.sin(lt * 1.1 + 1) * 0.15; heroC.head.rotation.x = 0.15;
+      heroC.setEyes(0.62, 0.45, [0, -0.3]);
+      placeCars(t); placePeds(t, 1, (px, p) => Math.abs(px - x) < 1.6 && p.z > 0); hero_car.visible = false;
+      sunFollow(V(x, 0, 0), V(40, 30, 30), 26);
+      const k = ease(u);
+      setCam(V(x - 3.6 + k * 0.6, 1.55 + Math.sin(lt * 1.7) * 0.03, 9.2), V(x - 0.4, 1.35, 4.6), 50, Math.sin(lt * 1.7) * 0.02);
+      hud = { label: 'HOUR 24', big: '0.10 %', sub: 'BLOOD-ALCOHOL LEVEL. SAME IMPAIRMENT.' };
+      break;
+    }
+    case 'h36': {
+      setMood('roomDay'); skyPlaneMat.map = skyDay;
+      hero.reset(); hero.sit(); hero.g.position.set(2.0, 0.08, 0.2); hero.g.rotation.y = 0;
+      const nod = Math.max(0, Math.sin(lt * 1.35 - 1.2)) ; const jerk = smooth(0.0, 0.08, (lt * 1.35 - 1.2) % (Math.PI * 2) - Math.PI + 0.04);
+      hero.head.rotation.x = nod * 0.45 * (1 - jerk); hero.torso.rotation.x = 0.12 + nod * 0.12;
+      hero.armL.rotation.x = -1.2; hero.armR.rotation.x = -1.2 + Math.sin(lt * 0.7) * 0.1;
+      hero.setEyes(0.55 - nod * 0.4, 0.6, [0, -0.4]);
+      const n = clamp(Math.floor(lt / 1.2) + 1, 1, 5);
+      cups.forEach((c, i) => { c.visible = i < n; const pop = clamp((lt - i * 1.2) / 0.18); c.scale.setScalar(i < n ? 0.6 + 0.4 * easeOut(pop) : 1); });
+      monScreen.material.emissive.set(0x3a5580);
+      sunFollow(V(0, 0, 0), V(6, 12, -14), 8);
+      const k = ease(u);
+      setCam(vlerp(V(0.2, 2.0, 3.9), V(0.9, 1.75, 2.9), k), vlerp(V(2.0, 1.45, 0.5), V(2.0, 1.6, 0.3), k), 46);
+      hud = { label: 'HOUR 36', big: `${n} ${n === 1 ? 'CUP' : 'CUPS'}`, sub: 'OF COFFEE. BARELY WORKS.' };
+      break;
+    }
+    case 'h48': {
+      setMood('overcast'); setWindows('day');
+      // blinks: local [2.1,2.5], [4.6,5.4]
+      const b1 = smooth(2.1, 2.22, lt) * (1 - smooth(2.38, 2.5, lt));
+      const b2 = smooth(4.6, 4.75, lt) * (1 - smooth(5.25, 5.4, lt));
+      lids = Math.max(b1, b2);
+      let z = lt < 2.3 ? 5.3 - lt * 0.12 : lt < 5.0 ? 2.9 - (lt - 2.3) * 0.25 : 1.9;
+      const startled = smooth(5.4, 5.6, lt) * (1 - smooth(6.6, 7.3, lt));
+      heroC.reset(); heroC.g.visible = true; heroC.g.position.set(0.2, z > 4 ? 0.2 : 0.05, z); heroC.g.rotation.y = Math.PI;
+      heroC.walk(lt < 5.0 ? lt * 3.2 : 0, 0.3);
+      if (lt >= 5.0) { heroC.armL.rotation.z = -1.4 * startled; heroC.armR.rotation.z = 1.4 * startled; heroC.armL.rotation.x = heroC.armR.rotation.x = -0.4 * startled; heroC.g.rotation.y = Math.PI - 1.2 * startled; heroC.g.position.y += 0.12 * startled * Math.sin(clamp((lt - 5.4) / 0.3) * Math.PI); }
+      heroC.g.rotation.z = Math.sin(lt * 1.3) * 0.06; heroC.head.rotation.x = 0.25 * (1 - startled);
+      heroC.setEyes(lt < 5.4 ? 0.45 : 1, 0.75, [0.8 * startled, 0]);
+      // hero car: arrives in lane z=+2 from +x, stops at x=2.7
+      const carX = lt < 2.5 ? 60 : lt < 4.6 ? lerp(60, 13, (lt - 2.5) / 2.1) : lt < 5.4 ? lerp(13, 2.9, easeOut((lt - 4.6) / 0.8)) : 2.9;
+      hero_car.visible = true; hero_car.position.set(carX, 0, 2); hero_car.rotation.y = Math.PI;
+      hero_car.rotation.z = lt > 5.2 && lt < 5.6 ? -Math.sin((lt - 5.2) / 0.4 * Math.PI) * 0.04 : 0;
+      placeCars(t, 1, (x, c) => c.lane > 0 && x > -12 && x < 70); placePeds(t, 1, (px, p) => Math.abs(px) < 2.2 && p.z > 0);
+      sunFollow(V(0, 0, 0), V(20, 60, 30), 25);
+      const after = lt > 5.4 ? 1 : 0;
+      const p = lt < 2.4 ? V(2.2, 1.35, 9.6) : lt < 5.4 ? V(4.6, 1.15, 7.4) : V(-2.6, 1.0, 5.6);
+      const l = lt < 2.4 ? V(0.2, 1.2, 4.6) : lt < 5.4 ? V(0.4, 1.0, 1.5) : V(1.6, 1.0, 1.9);
+      const drift = lt < 2.4 ? lt : lt < 5.4 ? lt - 2.4 : lt - 5.4;
+      setCam(p.add(V(-drift * 0.12, 0, -drift * 0.15)).add(shake(t, after ? 0.04 * (1 - smooth(5.4, 6.2, lt)) + 0.01 : 0.012)), l, after ? 42 : 48, lt < 5.4 ? 0.015 : -0.05);
+      hud = { label: 'HOUR 48', big: '30 SEC', sub: 'HOW LONG ONE MICROSLEEP CAN LAST' };
+      vig = 0.5 + lids * 0.3; filter = `saturate(${0.8}) blur(${lids * 6}px)`; break;
+    }
+    case 'day3': {
+      setMood('roomNight'); skyPlaneMat.map = skyNight;
+      poseSitBed(hero); hero.head.rotation.y = lt > 2.3 && lt < 3.4 ? -0.5 : lt > 5.4 ? 0.0 : 0.15; hero.head.rotation.x = 0.1;
+      hero.torso.rotation.x = 0.18;
+      hero.setEyes(1, 0.9, [Math.sin(lt * 7) * 0.4 + (lt > 2.3 && lt < 3.4 ? -1 : 0), 0.2]);
+      lamp.intensity = 7 + Math.sin(lt * 31) * (lt > 4.4 && lt < 4.7 ? 4 : 0); lamp.position.set(-1.6, 1.3, -3.4); lampShade.material.emissive.set(0x8a6a3a);
+      const flick = (a, b) => smooth(a, a + 0.08, lt) * (1 - smooth(b, b + 0.08, lt)) * (Math.sin(lt * 53) > -0.8 ? 1 : 0.3);
+      shadeA.visible = true; shadeA.userData.m.opacity = flick(1.4, 3.3) * 0.92;
+      winFig.visible = true; winFig.position.x = 2.3; winFig.visible = flick(3.3, 4.6) > 0.1;
+      shadeB.visible = true; shadeB.position.set(-4.0, 0, -1.75); shadeB.userData.m.opacity = flick(5.6, 7.6) * 0.95;
+      // camera: push on face, whip to window, back to face with figure close
+      let p, l;
+      if (lt < 3.3) { const k = ease(lt / 3.3); p = vlerp(V(0.9, 1.85, -0.9), V(-0.5, 1.8, -1.7), k); l = V(-2.6, 1.6, -2.6); }
+      else if (lt < 4.9) { const k = ease((lt - 3.3) / 0.6); p = V(-0.5, 1.8, -1.7); l = vlerp(V(-2.6, 1.6, -2.6), V(2.2, 1.9, -4.5), k); }
+      else { const k = ease((lt - 4.9) / 0.5); p = vlerp(V(-0.5, 1.8, -1.7), V(0.9, 1.75, 0.3), easeOut((lt - 4.9) / 2.6)); l = vlerp(V(2.2, 1.9, -4.5), V(-2.9, 1.55, -1.8), k); }
+      setCam(p.add(shake(t, 0.02, 3)), l, lt < 4.9 ? 48 : lerp(48, 60, ease((lt - 4.9) / 0.6)), Math.sin(lt * 0.8) * 0.03);
+      hud = { label: 'DAY 3', big: '72 H', sub: 'HALLUCINATIONS CAN START' };
+      vig = 0.75; grainAmt = 0.1; filter = 'saturate(0.75) contrast(1.08)'; break;
+    }
+    case 'day6': {
+      setMood('dusk'); setWindows('dusk');
+      heroC.reset(); heroC.g.visible = true; heroC.g.position.set(0, 0.2, 5.4); heroC.g.rotation.y = 0.3 + Math.sin(lt * 0.9) * 0.2;
+      heroC.g.rotation.z = Math.sin(lt * 1.2) * 0.1; heroC.head.rotation.x = 0.35 + Math.sin(lt * 0.7) * 0.1; heroC.head.rotation.z = Math.sin(lt * 1.4) * 0.2;
+      heroC.armL.rotation.z = 0.15; heroC.armR.rotation.z = -0.15;
+      heroC.setEyes(0.5, 1, [Math.sin(lt * 5) * 0.6, -0.3]);
+      placeCars(t * 2.8); placePeds(t, 3.2, (px, p) => Math.abs(px) < 1.2 && p.z > 0); hero_car.visible = false;
+      sunFollow(V(0, 0, 0), V(-70, 14, -20), 30);
+      const ang = 0.6 + u * 1.3, r = 5.2 - u * 1.4;
+      setCam(V(Math.sin(ang) * r, 1.4 + u * 0.4, 5.4 + Math.cos(ang) * r), V(0, 1.4, 5.4), 52, Math.sin(lt * 0.9) * 0.06);
+      hud = { label: 'DAY 6', big: '7 × 8 = ?', sub: 'MEMORY AND FOCUS FALL APART' };
+      ghostAmt = 0.35 + 0.15 * Math.sin(lt * 1.6); vig = 0.65; filter = `saturate(${1.2}) hue-rotate(${Math.sin(lt * 0.8) * 12}deg)`; break;
+    }
+    case 'rewind': {
+      setMood('day'); setWindows('day');
+      const tr = 22 - lt * 9; // time runs backwards
+      heroC.g.visible = false; hero_car.visible = false;
+      placeCars(tr, -1.0 * 3); placePeds(tr, -2.5);
+      sunFollow(V(0, 0, 0), V(35, 60, 25), 40);
+      setCam(V(-6 + lt * 3, 2.2, 12), V(-2 + lt * 3, 1.5, 0), 55);
+      const yr = Math.round(lerp(2026, 1964, ease(lt / 1.4)));
+      hud = { label: 'REWIND', big: String(yr), sub: '' };
+      rew = 1; tintCol = '#9fd8ff'; tintAmt = 0.15; grainAmt = 0.16; filter = 'contrast(1.1) saturate(1.3)'; break;
+    }
+    case 'y1964': case 'record': {
+      setMood('roomDay'); skyPlaneMat.map = skyDay;
+      monitor.visible = monScreen.visible = false; radio.visible = true; hero.g.visible = false; randy.g.visible = true;
+      if (S.id === 'y1964') {
+        randy.reset(); randy.g.position.set(0.0, 0.0, -0.4); randy.g.rotation.y = 0.35;
+        const bp = (lt * 1.7) % 1; const by = Math.abs(Math.cos(bp * Math.PI)) * 0.85;
+        ball.visible = true; ball.position.set(0.35 + Math.sin(0.35) * 0.45, 0.15 + by, -0.4 + Math.cos(0.35) * 0.45); ball.rotation.x = lt * 4;
+        randy.armR.rotation.x = -0.9 - by * 0.5; randy.armL.rotation.x = -0.3;
+        randy.setEyes(0.7, 0.55, [0.3, -0.7]); randy.head.rotation.x = 0.35;
+        drawCalendar(Math.min(8, Math.floor(lt * 1.5)));
+        const k = ease(u);
+        setCam(vlerp(V(2.6, 1.9, 3.4), V(1.5, 1.55, 2.5), k), V(0.1, 1.0, -0.6), 46);
+        hud = { label: 'SAN DIEGO, 1964', big: `${Math.floor(lerp(180, 264, easeOut(u * 1.2)))} H`, sub: 'RANDY GARDNER, AGE 17' };
+      } else {
+        poseSitBed(randy); randy.g.position.set(-2.45, 0.05, -2.2); randy.torso.rotation.x = 0.4; randy.head.rotation.x = 0.4; randy.setEyes(0.35, 0.95, [0, -0.6]);
+        randy.armL.rotation.x = randy.armR.rotation.x = -0.5;
+        drawCalendar(Math.min(11, 8 + Math.floor(lt * 1.6)));
+        let p, l;
+        if (lt < 2.8) { const k = ease(lt / 2.8); p = vlerp(V(-0.45, 1.95, -2.7), V(-0.3, 1.9, -2.3), k); l = V(-0.45, 1.93, -RD); }
+        else { const k = ease((lt - 2.8) / 2.7); p = vlerp(V(-0.3, 1.9, -2.3), V(0.3, 1.8, 0.4), k); l = vlerp(V(-0.45, 1.93, -RD), V(-2.3, 1.1, -2.3), k); }
+        setCam(p, l, 46);
+        hud = { label: 'WORLD RECORD', big: '11 DAYS', sub: 'GUINNESS NO LONGER ACCEPTS ATTEMPTS' };
+      }
+      sunFollow(V(0, 0, 0), V(6, 12, -14), 8);
+      tintCol = '#d9b98a'; tintAmt = 0.55; filter = 'sepia(0.55) contrast(1.05) brightness(1.02)'; grainAmt = 0.13; vig = 0.7; break;
+    }
+    case 'twist': {
+      setMood('roomNight'); skyPlaneMat.map = skyNight;
+      poseLying(hero, 0.05, 0.25); hero.setEyes(0, 0.1);
+      drawClock(clockAt(240 + lt * 3)[0]); clockLight.intensity = 0.8; clockLight.position.set(-1.75, 0.75, -3.25);
+      // particles flowing through head
+      partMesh.visible = true;
+      const m4 = new THREE.Matrix4(), hc = V(-3.0, 0.98, -3.45);
+      for (let i = 0; i < PN; i++) {
+        const [a, b, c, d] = partSeed[i];
+        const ph = (lt * (0.18 + a * 0.12) + b) % 1;
+        const ang = c * Math.PI * 2 + ph * 5;
+        const rad = 0.45 + 0.25 * Math.sin(ph * Math.PI) + d * 0.2;
+        const fade = Math.sin(ph * Math.PI) * smooth(0, 1.2, lt);
+        m4.makeScale(fade, fade, fade).setPosition(hc.x + Math.cos(ang) * rad, hc.y + 0.15 + (ph - 0.5) * 0.9 + Math.sin(ang * 2) * 0.05, hc.z + Math.sin(ang) * rad * 0.8);
+        partMesh.setMatrixAt(i, m4);
+      }
+      partMesh.instanceMatrix.needsUpdate = true;
+      phoneLight.intensity = 1.2 * smooth(0.5, 2, lt); phoneLight.color.set(0x5fd8ff); phoneLight.position.copy(hc).add(V(0, 0.6, 0.3));
+      faceLight.intensity = 1.2;
+      const ang = 0.15 + u * 0.7, r = lerp(2.7, 2.0, ease(u));
+      setCam(V(-3.0 + Math.sin(ang) * r, 2.25 - u * 0.25, -3.4 + Math.cos(ang) * r), V(-3.0, 1.05, -3.3), 46);
+      hud = { label: 'WHILE YOU SLEEP', big: '+60 %', sub: 'MORE SPACE TO FLUSH OUT WASTE (2013 STUDY)' };
+      vig = 0.7; filter = 'saturate(1.1)'; break;
+    }
+    case 'today': {
+      const lit = lerp(0.55, 0.33, smooth(0.8, 5.5, lt));
+      setMood('night', lit);
+      heroC.g.visible = false; hero_car.visible = false;
+      placeCars(t * 0.6); placePeds(t, 0.6);
+      sunFollow(V(0, 0, 0), V(-30, 50, 20), 40);
+      const w = winList[ourWin]; const tgt = V(w.px, w.py, w.pz);
+      const k = ease(u);
+      setCam(vlerp(V(w.px - 5, 1.6, 5.4), V(w.px + 0.5, 5.5, 2.5), k), vlerp(V(w.px + 2, 16, -14), tgt, k), lerp(62, 42, k));
+      hud = { label: 'TODAY', big: '1 IN 3', sub: 'ADULTS SLEEP LESS THAN 7 HOURS' };
+      vig = 0.55; break;
+    }
+    case 'end': {
+      setMood('roomNight'); skyPlaneMat.map = skyNight;
+      poseLying(hero, 0, 0); hero.armL.rotation.x = -Math.PI / 2 - 0.15; hero.armL.rotation.z = -0.3;
+      hero.setEyes(1, 0.55, [0, 0.9]);
+      phone.visible = true; room.updateMatrixWorld(true); phone.position.copy(hero.armL.localToWorld(V(0.05, -0.74, 0.0))); phone.position.z -= 0.12; phone.rotation.set(Math.PI / 2 + 0.35, 0, 0);
+      phoneLight.intensity = 3.5; phoneLight.color.set(0x8fb8ff); phoneLight.position.set(-3.1, 1.4, -3.3);
+      drawClock('01:59'); clockLight.intensity = 1.2; clockLight.position.set(-1.75, 0.75, -3.25);
+      const k = ease(clamp(lt / 4.2));
+      setCam(vlerp(V(-1.2, 2.3, -0.9), V(-2.1, 1.85, -2.0), k), vlerp(V(-2.9, 1.2, -3.0), V(-3.05, 1.3, -3.3), k), lerp(46, 40, k));
+      hud = { label: 'RIGHT NOW', big: '01:59 AM', sub: 'STILL SCROLLING?' };
+      vig = 0.8; break;
+    }
+  }
+
+  renderer.render(scene, camera);
+
+  // post
+  canvas.style.filter = filter;
+  if (ghostAmt > 0) { ghost.style.opacity = ghostAmt; gctx.clearRect(0, 0, 540, 960); gctx.drawImage(canvas, 0, 0, 540, 960); const off = 22 + Math.sin(t * 1.3) * 10; ghost.style.transform = `translate(${off}px, ${off * 0.3}px)`; ghost.style.filter = filter; }
+  else ghost.style.opacity = 0;
+  const tint = $('tint'); tint.style.opacity = tintAmt; if (tintCol) tint.style.background = tintCol;
+  $('vignette').style.opacity = vig;
+  drawGrain(Math.floor(t * 30), grainAmt);
+  setLids(lids);
+  setBars(t, rew);
+  $('rw').style.opacity = rew ? (Math.floor(t * 4) % 2 ? 1 : 0.85) : 0;
+  // flash on rewind exit
+  $('flash').style.opacity = t > 46.6 && t < 46.85 ? 0.6 * (1 - (t - 46.6) / 0.25) : 0;
+  setHud(t, hud, S.id === 'record' ? S.t0 - 10 : S.t0);
+  setCaption(t);
+}
+
+window.renderAt = (t) => { frame(t); };
+window.DURATION = DURATION;
+document.fonts.ready.then(() => { drawClock('01:59'); drawCalendar(0); window.READY = true; });
+</script>
+</body>
+</html>
