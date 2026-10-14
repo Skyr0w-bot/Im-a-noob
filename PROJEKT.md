@@ -24,6 +24,8 @@ Hinweis für jede neue Claude-Session: Lies diese Datei zuerst.
 - Die Zahlen und Folgen steigen von lokal (Person, Stadt) zu global (Land, Welt, Jahrzehnte). Das Finale zeigt das Endergebnis in Zahlen (Opfer, Prozent, Jahre) und lässt den Zuschauer mit einem harten Satz zurück.
 - Schluss nicht mit "also schlaf schön", sondern mit der größten Konsequenz. Eine Schlussfrage oder ein offener Cliffhanger, der zum Anfang zurückführt, ist erlaubt.
 - Fakten bleiben echt und belegbar. Extrem heißt nicht erfunden: Wenn die Wissenschaft unsicher ist, steht "Forscher schätzen" oder die Spanne im Text.
+- Luke erlaubt, "ein bisschen zu übertreiben, um es spannend zu halten". Übertreibungen stehen dann als Möglichkeit im Text ("Maybe…", "In this timeline…"), die großen Zahlen bleiben echt.
+- Technik-Lehren: Personen in einer Set-Gruppe immer mit lokalen Koordinaten platzieren (sonst doppelt verschoben). Lichter auf der Erde einzeln und weich ausblenden, nicht in Blöcken. Figuren brauchen Ellbogen, Knie und eine Ruhebewegung (`idle`). Höchstens 2 Render-Prozesse parallel.
 
 ## Videos
 | # | Thema | Ordner | Status |
@@ -31,6 +33,7 @@ Hinweis für jede neue Claude-Session: Lies diese Datei zuerst.
 | 1 | What if every bee on Earth vanished? | (in einer alten Session erstellt, Quellcode nicht vorhanden) | fertig, gepostet |
 | 2 | What if you never slept again? | `sleep/` | fertig, aber Ende zu schwach (Rewind, "heute schlafen 1 von 3 zu wenig"). Abgeschlossen, nicht überarbeitet |
 | 3 | What if the internet shut off? | `internet/` | im neuen Qualitäts-Stil; Endkarte kündigt Part 2 an: "What if GPS stopped working?" |
+| 4 | What if Roblox never existed? | `roblox/` | Alternative Geschichte 2004 → heute, Dinge werden "gelöscht"; Endkarte: "What if Minecraft never existed?" |
 
 ## Ideen-Liste für weitere Videos
 What if the Moon vanished? · What if all trees disappeared? · What if all ants vanished? · What if the ocean rose 1 meter? · What if the sun went dark for 8 minutes? · What if everyone jumped at once? · What if all insects disappeared? · What if humans disappeared?
