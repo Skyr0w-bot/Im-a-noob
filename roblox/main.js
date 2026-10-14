@@ -164,7 +164,7 @@ function doShot(S, t) {
       campus.drawSign(lt < 1.8 ? 'meta' : 'facebook', lt > 1.6 && lt < 2.0 ? (lt - 1.6) / 0.4 : 0);
       campus.people.forEach((P, i) => { const ph = (t * 0.06 + i / 8) % 1; standAt(P, -20 + ph * 40, 0, 12 + (i % 3) * 0.9, i % 2 ? Math.PI / 2 : -Math.PI / 2); if (i % 2 === 0) P.g.position.x = 20 - ph * 40; P.walk(t * 4.4 + i, 0.45); });
       const k = ease(u);
-      setCam(V(5000 + lerp(4.0, 2.5, k), lerp(1.5, 1.7, k), lerp(12.5, 11.0, k)), V(5000, 1.7, 4), 46);
+      setCam(V(5000 + lerp(3.0, 1.5, k), lerp(1.7, 1.9, k), lerp(23, 21, k)), V(5000, 0.2, 4), 46);
       out.glitch = smooth(1.55, 1.65, lt) * (1 - smooth(1.95, 2.1, lt));
       out.hud = { label: 'WITHOUT ROBLOX', big: 'OCTOBER 2021', sub: 'THE METAVERSE HYPE LOSES ITS BIGGEST PROOF' };
       break;
@@ -205,7 +205,7 @@ function doShot(S, t) {
       city.placeCars(t, { night: true }); city.placePeds(t, { hide: () => true });
       sunAt(V(0, 0, -80), V(-70, 14, -20), 260, 0.8);
       const k = ease(u);
-      setCam(V(lerp(90, 40, k), lerp(140, 110, k), lerp(110, 60, k)), V(0, 10, -90), 46);
+      setCam(V(lerp(90, 50, k), lerp(190, 165, k), lerp(140, 95, k)), V(0, 10, -90), 46);
       out.stat = { big: '111.8 MILLION', sub: 'PEOPLE PLAY ROBLOX EVERY DAY (2025)' };
       out.hud = { label: 'WITHOUT ROBLOX', big: 'TODAY', sub: 'GERMANY HAS 84 MILLION PEOPLE' };
       break;
