@@ -2,7 +2,15 @@
 
 Hinweis für jede neue Claude-Session: Lies diese Datei zuerst.
 
-## Format (Vorbild: "What if every bee on Earth vanished?")
+## Qualitäts-Maßstab (ab Video 3): Referenz "What if all women disappeared?"
+- Weiches, realistisches Licht statt flacher Klötzchen: Umgebungsverdeckung (AO), Tiefenunschärfe bei Nahaufnahmen, Glow für Bildschirme/Feuer, Dunst in der Ferne, gedeckte Farben
+- Figuren als glatte Schaufensterpuppen (Kapseln, Kugelkopf), keine Würfel
+- Typografie: Serifenschrift (Source Serif 4) für Titel, große Zahl und kursive Untertitel; kleine, gesperrte Sans-Labels (Inter) in Akzentfarbe
+- Layout: Titel mittig oben mit Icon; Zeit-Box links ("WITHOUT X" / "+1 WEEK" / kurze Fakt-Zeile); große Statistik oben mittig in Akzentfarbe ("90%"); kursiver Untertitel bei ca. 68 % Höhe
+- Rhythmus: alle ~3 s ein neuer Zeitsprung (+10 SEC, +1 MIN, +1 HOUR, +1 DAY … +1 MONTH/YEARS), jedes Mal ein neues Set
+- Finale: Erde aus dem All, Lichter gehen aus; danach Endkarte "PART 2 / What if …? / WHICH WOULD BE WORSE? TELL US IN THE COMMENTS"
+
+## Format (Video 1 und 2: "What if every bee on Earth vanished?")
 - Hochformat 1080×1920, 30 fps, Länge 60 bis 105 s
 - 3D-Blockwelt im Minecraft-Stil (Three.js), flache Farben, weiche Schatten
 - Aufbau als **Zeitstrahl**: Hook-Frage → Stunde/Tag/Monat/Jahr → Wende ("Rewind" in die echte Geschichte) → Erkenntnis → Schlussfrage, die zum Anfang zurückführt (Loop)
@@ -22,11 +30,12 @@ Hinweis für jede neue Claude-Session: Lies diese Datei zuerst.
 |---|---|---|---|
 | 1 | What if every bee on Earth vanished? | (in einer alten Session erstellt, Quellcode nicht vorhanden) | fertig, gepostet |
 | 2 | What if you never slept again? | `sleep/` | fertig, aber Ende zu schwach (Rewind, "heute schlafen 1 von 3 zu wenig"). Abgeschlossen, nicht überarbeitet |
+| 3 | What if the internet shut off? | `internet/` | im neuen Qualitäts-Stil; Endkarte kündigt Part 2 an: "What if GPS stopped working?" |
 
 ## Ideen-Liste für weitere Videos
-What if the Moon vanished? · What if all trees disappeared? · What if the internet shut off for 24 hours? · What if all ants vanished? · What if the ocean rose 1 meter? · What if the sun went dark for 8 minutes? · What if everyone jumped at once? · What if all insects disappeared? · What if humans disappeared?
+What if the Moon vanished? · What if all trees disappeared? · What if all ants vanished? · What if the ocean rose 1 meter? · What if the sun went dark for 8 minutes? · What if everyone jumped at once? · What if all insects disappeared? · What if humans disappeared?
 
-## So wird ein Video gebaut (Beispiel `sleep/`)
+## So wird ein Video gebaut (Beispiel `sleep/`, `internet/` genauso)
 ```
 cd sleep
 node render.mjs --stills /tmp/st 1 20 40        # einzelne Testbilder
@@ -38,3 +47,4 @@ ffmpeg -framerate 30 -i /tmp/frames/f%05d.jpg -i /tmp/audio.wav \
 - `timeline.js`: Szenen, Untertitel, Zeitpunkte der Soundeffekte (eine Quelle für alles)
 - `index.html`: 3D-Welt (Stadt + Zimmer), Figur, Kameras pro Szene, Info-Box und Effekte
 - Benötigt: Node + Playwright (Chromium), ffmpeg, Python mit numpy/scipy
+- `internet/`: `engine.js` (Renderer, AO/DOF/Bloom, Lichtstimmungen), `lib.js` (Figuren, Autos, Bäume, Texturen), `city.js` (Stadt), `sets.js` (Innenräume, Hafen, Tankstelle, Erde), `main.js` (Szenen + Overlays). 3D wird in 720×1280 gerendert, Text in 1080×1920. Ca. 3,5 s pro Bild
