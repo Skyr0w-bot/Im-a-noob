@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/jsm/" } }
+</script>
+<style>
+  @font-face { font-family: 'Serif'; src: url(vendor/serif.woff2) format('woff2'); font-weight: 200 900; font-style: normal; }
+  @font-face { font-family: 'Serif'; src: url(vendor/serif-italic.woff2) format('woff2'); font-weight: 200 900; font-style: italic; }
+  @font-face { font-family: 'Inter'; src: url(vendor/inter.woff2) format('woff2'); font-weight: 100 900; }
+  :root { --accent: #ff5a66; --warn: #ff5a66; }
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; background: #000; }
+  #gl { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; }
+  .ov { position: absolute; inset: 0; pointer-events: none; }
+  #statShade { background: radial-gradient(ellipse 75% 22% at 50% 19%, rgba(8,12,18,0.42) 0%, rgba(8,12,18,0) 100%); opacity: 0; }
+  #capShade { background: radial-gradient(ellipse 80% 9% at 50% 68.5%, rgba(8,12,18,0.38) 0%, rgba(8,12,18,0) 100%); opacity: 0; }
+  #vignette { background: radial-gradient(ellipse 80% 65% at 50% 50%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%); opacity: 0.5; }
+  #grain { opacity: 0.035; image-rendering: pixelated; width: 100%; height: 100%; }
+  #fade { background: #000; opacity: 0; }
+  #titleShade { background: radial-gradient(ellipse 70% 32% at 50% 30%, rgba(10,14,20,0.55) 0%, rgba(10,14,20,0) 100%); opacity: 0; }
+  #flash { background: #fff; opacity: 0; }
+  .shadow { text-shadow: 0 2px 16px rgba(0,0,0,0.55), 0 1px 3px rgba(0,0,0,0.5); }
+
+  #title { position: absolute; left: 0; right: 0; top: 330px; text-align: center; color: #fff; font-family: 'Serif'; opacity: 0; }
+  #title .icon { width: 150px; height: 150px; margin: 0 auto 70px; }
+  #title .l1, #title .l3 { font-size: 76px; font-weight: 400; line-height: 1.05; }
+  #title .l2 { font-size: 112px; font-weight: 400; color: var(--accent); line-height: 1.12; }
+
+  #hud { position: absolute; left: 62px; top: 880px; color: #fff; opacity: 0; }
+  #hudLabel { font-family: 'Inter'; font-weight: 600; font-size: 20px; letter-spacing: 2.6px; color: var(--accent); }
+  #hudBig { font-family: 'Serif'; font-weight: 400; font-size: 66px; line-height: 1.05; margin: 4px 0 14px -2px; white-space: nowrap; letter-spacing: 0.5px; }
+  #hudSub { font-family: 'Inter'; font-weight: 500; font-size: 15.5px; letter-spacing: 2.4px; opacity: 0.9; max-width: 800px; }
+
+  #stat { position: absolute; left: 0; right: 0; top: 300px; text-align: center; color: var(--accent); opacity: 0; }
+  #statBig { font-family: 'Serif'; font-weight: 400; font-size: 104px; line-height: 1; }
+  #statSub { font-family: 'Inter'; font-weight: 600; font-size: 15px; letter-spacing: 2.4px; color: #fff; margin-top: 16px; opacity: 0.9; padding: 0 120px; }
+
+  #cap { position: absolute; left: 90px; right: 90px; top: 1270px; text-align: center; color: #fff;
+         font-family: 'Serif'; font-style: italic; font-weight: 400; font-size: 36px; line-height: 1.32; opacity: 0; }
+  #cap .hl { color: var(--accent); font-style: italic; }
+
+  #end { position: absolute; inset: 0; background: #0b0b0d; color: #fff; text-align: center; opacity: 0; }
+  #end .part { font-family: 'Inter'; font-weight: 600; font-size: 20px; letter-spacing: 6px; color: var(--accent); margin-top: 760px; }
+  #end .q1, #end .q3 { font-family: 'Serif'; font-size: 66px; line-height: 1.1; }
+  #end .q1 { margin-top: 34px; }
+  #end .q2 { font-family: 'Serif'; font-size: 96px; color: var(--accent); line-height: 1.15; }
+  #end .cta { font-family: 'Inter'; font-weight: 600; font-size: 17px; letter-spacing: 3.4px; margin-top: 54px; opacity: 0.85; line-height: 2; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl" width="720" height="1280"></canvas>
+  <div id="vignette" class="ov"></div>
+  <div id="statShade" class="ov"></div>
+  <div id="capShade" class="ov"></div>
+  <canvas id="grain" class="ov" width="270" height="480"></canvas>
+  <div id="fade" class="ov"></div>
+  <div id="titleShade" class="ov"></div>
+  <div id="flash" class="ov"></div>
+  <div id="title" class="shadow">
+    <svg class="icon" viewBox="0 0 100 100" fill="none">
+      <g id="wifi">
+        <rect x="22" y="22" width="56" height="56" rx="6" fill="#f5cd30"/>
+        <rect x="36" y="38" width="7" height="12" fill="#111"/><rect x="57" y="38" width="7" height="12" fill="#111"/>
+        <path d="M36 60 Q50 72 64 60" stroke="#111" stroke-width="4.5" stroke-linecap="round"/>
+      </g>
+      <line id="slash" x1="14" y1="14" x2="86" y2="86" stroke="var(--warn)" stroke-width="7" stroke-linecap="round" opacity="0"/>
+    </svg>
+    <div class="l1">What if</div><div class="l2">Roblox</div><div class="l3">never existed?</div>
+  </div>
+  <div id="stat" class="shadow"><div id="statBig"></div><div id="statSub"></div></div>
+  <div id="hud" class="shadow"><div id="hudLabel"></div><div id="hudBig"></div><div id="hudSub"></div></div>
+  <div id="cap" class="shadow"></div>
+  <div id="end">
+    <div class="part">PART 2</div>
+    <div class="q1">What if</div><div class="q2">Minecraft</div><div class="q3">never existed?</div>
+    <div class="cta">WHICH WOULD BE WORSE?<br>TELL US IN THE COMMENTS</div>
+  </div>
+</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
