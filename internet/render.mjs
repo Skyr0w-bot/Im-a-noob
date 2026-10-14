@@ -31,7 +31,7 @@ await page.waitForFunction(() => window.READY === true, null, { timeout: 180000 
 const stage = await page.$('#stage');
 async function shot(t, file) {
   await page.evaluate(t => window.renderAt(t), t);
-  await stage.screenshot({ path: file, type: 'jpeg', quality: 93 });
+  await stage.screenshot({ path: file, type: 'jpeg', quality: 93, timeout: 180000 });
 }
 if (stills) {
   for (const t of args.slice(2).map(Number)) { const s = Date.now(); await shot(t, path.join(out, `t${t.toFixed(2)}.jpg`)); console.log(t, Date.now() - s, 'ms'); }
