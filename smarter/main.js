@@ -139,7 +139,7 @@ function doShot(S, t) {
       city.placeCars(t, { night: true, speed: 1.3 }); city.placePeds(t, { hide: () => true });
       sunAt(V(0, 0, -60), V(-70, 14, -20), 120, 0.9);
       const k = ease(u);
-      setCam(V(lerp(18, 8, k), lerp(42, 30, k), lerp(20, 8, k)), V(0, 2, lerp(-70, -60, k)), 46);
+      setCam(V(lerp(2.5, 0.5, k), lerp(46, 34, k), lerp(26, 12, k)), V(0, 2, lerp(-70, -60, k)), 46);
       out.hud = L('MONTH 6', 'IT RUNS TRAFFIC, POWER AND MONEY');
       break;
     }
