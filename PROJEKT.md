@@ -35,6 +35,7 @@ Hinweis für jede neue Claude-Session: Lies diese Datei zuerst.
 | 3 | What if the internet shut off? | `internet/` | im neuen Qualitäts-Stil; Endkarte kündigt Part 2 an: "What if GPS stopped working?" |
 | 4 | What if Roblox never existed? | `roblox/` | Alternative Geschichte 2004 → heute, Dinge werden "gelöscht"; Endkarte: "What if Minecraft never existed?" |
 | 5 | What if AI took all our jobs? | `ai/` | Day 1 → +20 Jahre, Büro leert sich, Roboter, Proteste, Erde (Arbeit erlischt, Rechenzentren wachsen); Endkarte: "What if AI became smarter than us?" |
+| 6 | What if AI became smarter than us? | `smarter/` | Minute 1 → Jahr 20, Kontrollzentrale, Selbstverbesserung, Abschalt-Knopf, Erde mit wachsendem KI-Netz; Endkarte: "Part 3: What if we merged with AI?" |
 
 ## Ideen-Liste für weitere Videos
 What if the Moon vanished? · What if all trees disappeared? · What if all ants vanished? · What if the ocean rose 1 meter? · What if the sun went dark for 8 minutes? · What if everyone jumped at once? · What if all insects disappeared? · What if humans disappeared?
